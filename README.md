@@ -59,33 +59,39 @@ NyatiCare Gateway is a demonstration of how you'd architect around those constra
           │      ┌─────────────────────────────────┐      │
           │      │         Auth API Gateway        │      │
           │      │ Instantly returns 202 Accepted  │      │
-          │      │       with a polling token      │      │
           │      └─┬─────────────────────────────┬─┘      │
           │ Writes │                             │ Pushes │
           │ State  ▼                             ▼ Event  │
           │ ┌──────────────┐             ┌──────────────┐ │
           │ │ Redis Store  │             │ Kafka Broker │ │
-          │ │ (State & TTL)│             │ (auth_topic) │ │
-          │ └──────┬───────┘             └──────┬───────┘ │
-          │        │                            │         │
-          │ Reads/ ▼                            ▼ Consumes│
-          │ Update ┌──────────────────────┐ ┌───────────┐ │
-          │        │ State Machine /      │ │ Background│ │
-          │        │ Webhook Ingestion    │ │ Dispatch  │ │
-          │        │ (Triggers next       │ │ Workers   │ │
-          │        │ fallback on failure) │ │           │ │
-          │        └───────┬──────────────┘ └─────┬─────┘ │
-          │                ▲                      │       │
-          =================│======================│========
-              Receives DSN │                      │ Executes
-              via Webhook  │                      │ Network Call
-                           │                      ▼
-                 ┌─────────┴─────────────────────────────┐
+          │ │ (Tracks current  │         │ (auth_topic) │ │
+          │ │  cascade step)   │         └──────┬───────┘ │
+          │ └──────┬───────┘                    │         │
+          │        │                            │ Consumes│
+          │ Reads/ ▼                            ▼         │
+          │ Updates┌────────────────────────────────────┐ │
+          │        │     Cascading Dispatch Engine      │ │
+          │        │                                    │ │
+          │        │  [Step 1] ──► SMS Workers          │ │
+          │        │      │ (if fails / times out)      │ │
+          │        │  [Step 2] ──► WhatsApp Workers     │ │
+          │        │      │ (if fails / times out)      │ │
+          │        │  [Step 3] ──► Voice Call Workers   │ │
+          │        └────────────────────┬───────────────┘ │
+          │                             │                 │
+          │      ┌──────────────────────▼──────────┐      │
+          │      │  Webhook Ingestion Endpoint     │      │
+          │      │  (Listens for Telecom Failures) │      │
+          │      └──────────────────────┬──────────┘      │
+          ==============================│==================
+                                        │
+                                        ▼
+                 ┌───────────────────────────────────────┐
                  │      External Telecom Providers       │
                  │  (Safaricom, Twilio, Africa's Talking)│
-                 └─────────────────┬─────────────────────┘
-                                   │ synced when reachable
-                                   ▼
+                 └──────────────────┬────────────────────┘
+                                    │ synced when reachable
+                                    ▼
                  ┌───────────────────────────────────────┐
                  │      Taifa Care HMIS (external)       │
                  │      mocked in this repo              │
