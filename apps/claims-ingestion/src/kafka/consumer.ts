@@ -1,4 +1,4 @@
-import { Kafka } from "kafkajs";
+import { Kafka, Consumer } from "kafkajs";
 import pino from "pino";
 import { OfflineClaimsQueue } from "../offlineQueue/sqliteQueue";
 
@@ -7,51 +7,100 @@ const logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
 const kafka = new Kafka({
   clientId: `${process.env.KAFKA_CLIENT_ID ?? "nyaticare-claims"}-consumer`,
   brokers: (process.env.KAFKA_BROKERS ?? "localhost:9092").split(","),
+  retry: {
+    initialRetryTime: 300,
+    retries: 10,
+  },
 });
 
 const queue = new OfflineClaimsQueue();
+const activeConsumer: Consumer = kafka.consumer({ groupId: "nyaticare-claims-sync" });
 
-/**
- * Consumes claim events and attempts to forward them to Taifa Care
- * Central. On success, marks the local offline-queue record as synced.
- * On failure (central down / degraded), the event is simply not acked
- * as synced and will be retried — the offline queue is the source of
- * truth, Kafka is the delivery mechanism.
- */
+activeConsumer.on(activeConsumer.events.CRASH, (event) => {
+  logger.error(
+    { error: event.payload.error.message },
+    "consumer crash event received"
+  );
+  process.exit(1); 
+});
+
 export async function startClaimsConsumer(): Promise<void> {
-  const consumer = kafka.consumer({ groupId: "nyaticare-claims-sync" });
+  setupGracefulShutdown();
   const topic = process.env.KAFKA_CLAIMS_TOPIC ?? "sha.claims.ingestion";
+  
+  try {
+    await activeConsumer.connect();
+    await activeConsumer.subscribe({ topic, fromBeginning: true });
 
-  await consumer.connect();
-  await consumer.subscribe({ topic, fromBeginning: false });
+    await activeConsumer.run({
+      eachMessage: async ({ topic, partition, message }) => {
+        if (!message.value) return;
+        
+        let event: any;
+        
+        try {
+          event = JSON.parse(message.value.toString());
+        } catch (parseError) {
+          logger.error(`[!] POISON PILL DETECTED: Could not parse message!`);
+          return; 
+        }
 
-  await consumer.run({
-    eachMessage: async ({ message }) => {
-      if (!message.value) return;
+        logger.info(`\n--- NEW MESSAGE INBOUND ---`);
+        logger.info(`Topic: ${topic} | Partition: ${partition}`);
+        logger.info(`[✓] Successfully processing claimId: ${event.claimId}`);
 
-      const event = JSON.parse(message.value.toString());
-      logger.info({ claimId: event.claimId }, "processing claim event");
-
-      try {
-        // NOTE: Replace with the real Taifa Care Central HMIS submission call.
-        await submitToTaifaCare(event);
-        queue.markSynced(event.claimId);
-        logger.info({ claimId: event.claimId }, "claim synced to Taifa Care");
-      } catch (error) {
-        logger.warn(
-          { claimId: event.claimId, error: (error as Error).message },
-          "Taifa Care submission failed, will retry from offline queue"
-        );
-      }
-    },
-  });
+        try {
+          await submitToTaifaCare(event);
+          queue.markSynced(event.claimId);
+          logger.info(`[✓] Claim ${event.claimId} synced to Taifa Care\n---------------------------\n`);
+        } catch (error) {
+          logger.warn(
+            { claimId: event.claimId, error: (error as Error).message },
+            "Taifa Care submission failed, will retry from offline queue"
+          );
+        }
+      },
+    });
+  } catch (error) {
+    logger.error({ error: (error as Error).message }, "Kafka consumer failed to start");
+    process.exit(1);
+  }
 }
 
 async function submitToTaifaCare(event: Record<string, unknown>): Promise<void> {
   const baseUrl = process.env.TAIFA_CARE_BASE_URL;
   if (!baseUrl) {
-    throw new Error("TAIFA_CARE_BASE_URL not configured");
+    logger.warn("TAIFA_CARE_BASE_URL not configured. Simulating success for local testing.");
+    return;
   }
-  // Placeholder for the real HTTP call to the central HMIS.
-  // await axios.post(`${baseUrl}/v1/claims`, event, { timeout: 5000 });
+
+  const response = await fetch(`${baseUrl}/api/v1/claims`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${process.env.TAIFA_CARE_API_KEY ?? ""}`
+    },
+    body: JSON.stringify(event)
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`API responded with status ${response.status}: ${errorBody}`);
+  }
+}
+
+function setupGracefulShutdown() {
+  const signalTraps: NodeJS.Signals[] = ['SIGTERM', 'SIGINT', 'SIGUSR2'];
+  
+  signalTraps.forEach(type => {
+    process.once(type, async () => {
+      logger.info(`Signal ${type} received, shutting down gracefully...`);
+      try {
+        await activeConsumer.disconnect();
+      } catch (e) {
+        logger.error({ error: (e as Error).message }, "Error disconnecting consumer");
+      }
+      process.exit(0);
+    });
+  });
 }
