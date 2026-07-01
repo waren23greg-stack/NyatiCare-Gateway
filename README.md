@@ -19,14 +19,15 @@ This system is **not production-ready** for handling real patient data. It has n
 
 ## Why this exists
 
-In June 2026, SHA began migrating claims processing for public hospitals from its old Provider Portal to a new platform, Taifa Care HMIS, and gave healthcare providers a three-month window to integrate or risk losing their contracts. That kind of hard deadline, applied across thousands of facilities with very different levels of connectivity and IT maturity, creates a predictable set of engineering problems:
+In June 2026, SHA began migrating claims processing for public hospitals from its old Provider Portal to a new platform, Taifa Care HMIS, giving healthcare providers a hard deadline to integrate or risk losing their contracts. Rolled out across thousands of facilities with very different levels of connectivity and IT maturity, that kind of deadline creates a predictable set of engineering problems:
 
 - **Unreliable connectivity at the edge.** Many facilities, especially outside major towns, don't have consistent internet access. A claims pipeline that assumes an always-on connection to a central platform will lose data during outages.
-- **Slow patient verification.** Looking up a patient's SHA status on every visit by calling a central API directly doesn't scale well when hundreds of facilities are hitting the same endpoint.
+- **Slow patient verification.** Looking up a patient's SHA status by calling a central API on every visit doesn't scale well when hundreds of facilities are hitting the same endpoint.
 - **OTP delivery is fragile.** SMS-based one-time passwords for provider or patient authentication routinely fail or time out, especially on congested networks.
+- **No-data, no-smartphone access.** A meaningful share of patients and even some facility staff don't have a smartphone or a reliable data connection at all — a system that only works over an app or web portal excludes them by design.
 - **A brand-new platform will have rough edges.** Any system this size, freshly migrated, is going to have downtime and degraded performance in its early months. Client systems that integrate with it need to expect failure, not just success.
 
-NyatiCare Gateway is a demonstration of how you'd architect around those constraints: cache aggressively at the edge, queue durably when the network is unavailable, and never silently drop a claim just because a downstream call failed.
+NyatiCare Gateway is a demonstration of how you'd architect around those constraints: cache aggressively at the edge, queue durably when the network is unavailable, offer a fallback for every failure mode — including no data connection at all — and never silently drop a claim just because a downstream call failed.
 
 ---
 
@@ -64,8 +65,8 @@ NyatiCare Gateway is a demonstration of how you'd architect around those constra
           │ State  ▼                             ▼ Event  │
           │ ┌──────────────┐             ┌──────────────┐ │
           │ │ Redis Store  │             │ Kafka Broker │ │
-          │ │ (Tracks current  │         │ (auth_topic) │ │
-          │ │  cascade step)   │         └──────┬───────┘ │
+          │ │ (Tracks       │            │ (auth_topic) │ │
+          │ │  cascade step)│            └──────┬───────┘ │
           │ └──────┬───────┘                    │         │
           │        │                            │ Consumes│
           │ Reads/ ▼                            ▼         │
@@ -98,13 +99,17 @@ NyatiCare Gateway is a demonstration of how you'd architect around those constra
                  └───────────────────────────────────────┘
 ```
 
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the reasoning behind the async auth design, fallback ordering, and gateway-level protections (rate limiting, timeouts, circuit-breaker semantics).
+
 ### Core mechanisms
 
-**1. Cascading OTP fallback.** If SMS delivery exceeds `OTP_TIMEOUT_MS` or the provider returns repeated 5xx errors, the auth service automatically retries the code over WhatsApp Business, then falls back to an IVR voice call — so a flaky SMS aggregator doesn't block someone from authenticating.
+**1. Cascading OTP fallback.** If SMS delivery exceeds `OTP_TIMEOUT_MS` or the provider returns repeated errors, the auth service retries the code over WhatsApp Business, then falls back to an IVR voice call — so a flaky SMS aggregator doesn't block someone from authenticating. The current implementation runs this chain in-process; the roadmap below covers moving dispatch onto Kafka so the request thread never blocks on a telecom call at all.
 
 **2. Offline-first claims queue.** Claims are signed and hashed locally, then written to an embedded SQLite ledger *before* the system attempts to forward them upstream. A background worker retries delivery and only marks a claim as synced once the upstream platform confirms receipt. A downstream outage delays a claim; it never loses one.
 
 **3. Edge-cached patient registry.** Patient/SHA-number lookups are served from a local Redis cache first (cache-aside pattern), falling back to the central registry only on a cache miss. This is what keeps repeat verification lookups fast instead of round-tripping to a central API on every visit.
+
+**4. USSD access path (planned).** Not every facility or patient has a smartphone or reliable data. A `*XXX#`-style USSD menu — most realistically built on Africa's Talking' USSD sandbox — is planned as a parallel front door into the same auth/patient/claims services, so the system doesn't quietly exclude the people it's meant to serve. Tracked in the Roadmap.
 
 ---
 
@@ -117,8 +122,10 @@ NyatiCare Gateway is a demonstration of how you'd architect around those constra
 | Messaging | Apache Kafka |
 | Edge cache | Redis 7 |
 | Offline store | SQLite |
+| Database | PostgreSQL 15 |
 | Containers | Docker / Docker Compose |
 | Orchestration | Kubernetes, with HPA autoscaling |
+| Infra as code | Terraform (skeleton) |
 | Testing | Jest |
 | Logging | Pino (structured JSON logs) |
 
@@ -130,20 +137,23 @@ NyatiCare Gateway is a demonstration of how you'd architect around those constra
 nyaticare-gateway/
 ├── .github/
 │   └── workflows/
-│       └── ci.yml               # lint, build, test on push/PR
+│       └── ci.yml                # lint, build, test on push/PR
 ├── apps/
-│   ├── auth-service/             # OTP fallback + identity (port 4001)
-│   ├── claims-ingestion/         # Kafka consumer + offline queue (port 4002)
-│   │   └── src/__tests__/        # fault-tolerance & outage simulation tests
-│   └── patient-registry/         # Redis-cached lookup service (port 4003)
+│   ├── auth-service/              # OTP fallback + identity (port 4001)
+│   ├── claims-ingestion/          # Kafka consumer + offline queue (port 4002)
+│   └── patient-registry/          # Redis-cached lookup service (port 4003)
 ├── packages/
-│   └── core-architecture/        # shared types, interfaces, crypto utils
+│   ├── core-architecture/         # shared types, interfaces, crypto utils
+│   └── database/                  # Postgres schema, migrations, seed data
 ├── infrastructure/
-│   ├── docker-compose.yml        # local multi-container dev stack
-│   └── kubernetes-manifests.yaml # Deployment, Service, HPA
+│   ├── docker-compose.yml         # local multi-container dev stack
+│   ├── k8s/                       # Deployment, Service, HPA manifests
+│   └── terraform/                 # cloud infra skeleton (AWS)
+├── docs/
+│   └── ARCHITECTURE.md            # design rationale for the auth cascade
 ├── .env.example
 ├── LICENSE
-└── package.json                  # npm workspaces root
+└── package.json                   # npm workspaces root
 ```
 
 ---
@@ -159,16 +169,16 @@ nyaticare-gateway/
 ### Setup
 
 ```bash
-git clone https://github.com/<your-username>/nyaticare-gateway.git
-cd nyaticare-gateway
+git clone git@github.com:waren23greg-stack/NyatiCare-Gateway.git
+cd NyatiCare-Gateway
 cp .env.example .env
 npm install
 ```
 
-### Run the infrastructure (Redis, Kafka, Zookeeper) and services
+### Run the infrastructure (Postgres, Redis, Kafka, Zookeeper) and services
 
 ```bash
-docker-compose -f infrastructure/docker-compose.yml up -d --build
+docker compose -f infrastructure/docker-compose.yml up -d --build
 ```
 
 ### Run services in dev mode with hot reload
@@ -187,7 +197,7 @@ curl http://localhost:4003/api/v1/health-check   # patient-registry
 
 ### Environment variables
 
-See `.env.example` for the full list. Key ones:
+See [`.env.example`](.env.example) for the full list. Key ones:
 
 ```ini
 NODE_ENV=development
@@ -214,43 +224,39 @@ TAIFA_CARE_BASE_URL=https://example.go.ke
 
 ---
 
-## Testing
-
-The claims-ingestion service includes a fault-tolerance suite that simulates a full 503 outage from the downstream platform and verifies that in-flight claims stay safely queued rather than being dropped or falsely marked as submitted:
-
-```bash
-cd apps/claims-ingestion
-npm run test
-```
-
-What it checks:
-- The Kafka consumer catches the simulated 503 without crashing.
-- The claim's offset is never acknowledged while the downstream call is failing.
-- The claim remains in the SQLite queue with status `signed_offline` until a retry succeeds.
-
----
-
 ## Deployment
 
-Kubernetes manifests are included for deploying the claims-ingestion service (the pattern is the same for the other two) with autoscaling:
+### Docker
+
+Each service ships with its own `Dockerfile` under `apps/<service>/`.
+
+### Kubernetes
 
 ```bash
-kubectl apply -f infrastructure/kubernetes-manifests.yaml
+kubectl apply -f infrastructure/k8s/namespace.yaml
+kubectl apply -f infrastructure/k8s/
 ```
 
-This defines a `Deployment` with liveness/readiness probes, a `ClusterIP` `Service`, and a `HorizontalPodAutoscaler` that scales between 3 and 12 replicas based on CPU and memory utilization. Adjust `TAIFA_CARE_BASE_URL`, secrets, and resource limits before pointing this at anything beyond a sandbox namespace.
+Manifests define `Deployment`s with liveness/readiness probes, `ClusterIP` `Service`s, and `HorizontalPodAutoscaler`s for `auth-service` and `patient-registry`. Adjust `TAIFA_CARE_BASE_URL`, secrets, and resource limits before pointing this at anything beyond a sandbox namespace.
+
+### Terraform
+
+`infrastructure/terraform/` is a skeleton (ECR repositories only) — a starting point, not a turn-key production module. Fill in a real backend, EKS/RDS/ElastiCache/MSK resources, and state management before using it for anything real.
 
 ---
 
 ## Roadmap
 
-- [ ] GitHub Actions CI (lint, build, test on every PR)
-- [ ] Exponential backoff + jitter on the circuit breaker, not just fixed retry
+- [ ] Move OTP dispatch onto Kafka so the auth-service HTTP handler never blocks on a telecom call (see `docs/ARCHITECTURE.md`)
+- [ ] Webhook ingestion endpoint for telecom delivery-status callbacks, with Redis TTL as a silent-failure backstop
+- [ ] USSD gateway service for smartphone-free / data-free access
+- [ ] Dual-key rate limiting (IP + phone number) on OTP endpoints to prevent OTP-flooding abuse
+- [ ] Exponential backoff + jitter on retries, not just fixed intervals
 - [ ] Structured audit-log export for the offline claims ledger
 - [ ] Prometheus metrics + Grafana dashboard for queue depth and cache hit rate
 - [ ] Facility onboarding CLI (bulk-register facility codes)
 - [ ] Swap the mocked downstream client for a real sandbox integration if/when SHA publishes one
-- [ ] Encryption at rest for the SQLite offline queue
+- [ ] Encryption at rest for the SQLite offline queue and Postgres
 
 ---
 
@@ -260,7 +266,7 @@ Issues and PRs are welcome. If you're picking this up as a learning project:
 
 1. Fork the repo and create a feature branch.
 2. Run `npm install` at the root (this is an npm-workspaces monorepo, so installing at the root wires up all three services).
-3. Add tests for any new resilience behavior — the fault-tolerance suite in `claims-ingestion` is a good template to follow.
+3. Add tests for any new resilience behavior.
 4. Open a PR describing what you changed and why.
 
 ---

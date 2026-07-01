@@ -1,0 +1,93 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nyaticare
+      POSTGRES_PASSWORD: nyaticare
+      POSTGRES_DB: nyaticare_gateway
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../packages/database/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nyaticare"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  auth-service:
+    build:
+      context: ../apps/auth-service
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    ports:
+      - "4001:4001"
+    depends_on:
+      - redis
+
+  claims-ingestion:
+    build:
+      context: ../apps/claims-ingestion
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    ports:
+      - "4002:4002"
+    volumes:
+      - claims_offline_data:/app/data
+    depends_on:
+      - kafka
+      - postgres
+
+  patient-registry:
+    build:
+      context: ../apps/patient-registry
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    ports:
+      - "4003:4003"
+    depends_on:
+      - redis
+      - postgres
+
+volumes:
+  postgres_data:
+  claims_offline_data:

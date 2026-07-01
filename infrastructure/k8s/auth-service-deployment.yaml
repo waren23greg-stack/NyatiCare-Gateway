@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: nyaticare-gateway
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app: auth-service }
+  template:
+    metadata:
+      labels: { app: auth-service }
+    spec:
+      containers:
+        - name: auth-service
+          image: ghcr.io/your-org/nyaticare/auth-service:latest
+          ports:
+            - containerPort: 4001
+          envFrom:
+            - secretRef: { name: nyaticare-auth-secret }
+          readinessProbe:
+            httpGet: { path: /api/v1/health-check, port: 4001 }
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: { path: /api/v1/health-check, port: 4001 }
+            initialDelaySeconds: 15
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: nyaticare-gateway
+spec:
+  selector: { app: auth-service }
+  ports:
+    - port: 4001
+      targetPort: 4001
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: auth-service-hpa
+  namespace: nyaticare-gateway
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: auth-service
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 65 }

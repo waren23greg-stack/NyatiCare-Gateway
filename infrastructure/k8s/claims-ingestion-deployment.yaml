@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: claims-ingestion
+  namespace: nyaticare-gateway
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app: claims-ingestion }
+  template:
+    metadata:
+      labels: { app: claims-ingestion }
+    spec:
+      containers:
+        - name: claims-ingestion
+          image: ghcr.io/your-org/nyaticare/claims-ingestion:latest
+          ports:
+            - containerPort: 4002
+          envFrom:
+            - secretRef: { name: nyaticare-claims-secret }
+          volumeMounts:
+            - name: offline-queue-storage
+              mountPath: /app/data
+          readinessProbe:
+            httpGet: { path: /api/v1/health-check, port: 4002 }
+            initialDelaySeconds: 5
+          resources:
+            requests: { cpu: "150m", memory: "256Mi" }
+            limits: { cpu: "750m", memory: "1Gi" }
+      volumes:
+        - name: offline-queue-storage
+          persistentVolumeClaim:
+            claimName: claims-offline-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: claims-offline-pvc
+  namespace: nyaticare-gateway
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: claims-ingestion
+  namespace: nyaticare-gateway
+spec:
+  selector: { app: claims-ingestion }
+  ports:
+    - port: 4002
+      targetPort: 4002

@@ -1,0 +1,6 @@
+{
+  "name": "@nyaticare/database",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PostgreSQL schema, migrations, and seed data for NyatiCare-Gateway"
+}
