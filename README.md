@@ -37,8 +37,8 @@ NyatiCare Gateway is a demonstration of how you'd architect around those constra
 │                Hospital / Facility Edge Layer                 │
 │            (local HMIS, EMR, or point-of-care client)         │
 └──────────────────────────────┬──────────────────────────────┬─┘
-                                │ HTTPS
-                                ▼
+                               │ HTTPS (Client polls/SSE for OTP)
+                               ▼
 ┌───────────────────────────────────────────────────────────────┐
 │                     NyatiCare API Gateway                     │
 │         rate limiting · JWT auth · circuit breaking           │
@@ -46,24 +46,50 @@ NyatiCare Gateway is a demonstration of how you'd architect around those constra
                 │                             │
                 ▼                             ▼
    ┌─────────────────────────┐   ┌─────────────────────────────┐
-   │   Patient Registry       │   │   Claims Ingestion           │
-   │   Redis edge cache,      │   │   Kafka consumer, SQLite     │
-   │   cache-aside pattern    │   │   fallback queue on failure  │
+   │   Patient Registry      │   │   Claims Ingestion          │
+   │   Redis edge cache,     │   │   Kafka consumer, SQLite    │
+   │   cache-aside pattern   │   │   fallback queue on failure │
    └────────────┬─────────────┘   └───────────────┬───────────────┘
                 │                                 │
                 └────────────────┬────────────────┘
                                  ▼
-                  ┌───────────────────────────────┐
-                  │        Auth Service            │
-                  │   SMS → WhatsApp → Voice OTP    │
-                  │      cascading fallback         │
-                  └───────────────┬───────────────┘
-                                 │ synced when reachable
-                                 ▼
-                  ┌───────────────────────────────┐
-                  │   Taifa Care HMIS (external)   │
-                  │   mocked in this repo           │
-                  └───────────────────────────────┘
+
+          ====== ENHANCED ASYNC AUTHENTICATION LAYER ======
+          │                                               │
+          │      ┌─────────────────────────────────┐      │
+          │      │         Auth API Gateway        │      │
+          │      │ Instantly returns 202 Accepted  │      │
+          │      │       with a polling token      │      │
+          │      └─┬─────────────────────────────┬─┘      │
+          │ Writes │                             │ Pushes │
+          │ State  ▼                             ▼ Event  │
+          │ ┌──────────────┐             ┌──────────────┐ │
+          │ │ Redis Store  │             │ Kafka Broker │ │
+          │ │ (State & TTL)│             │ (auth_topic) │ │
+          │ └──────┬───────┘             └──────┬───────┘ │
+          │        │                            │         │
+          │ Reads/ ▼                            ▼ Consumes│
+          │ Update ┌──────────────────────┐ ┌───────────┐ │
+          │        │ State Machine /      │ │ Background│ │
+          │        │ Webhook Ingestion    │ │ Dispatch  │ │
+          │        │ (Triggers next       │ │ Workers   │ │
+          │        │ fallback on failure) │ │           │ │
+          │        └───────┬──────────────┘ └─────┬─────┘ │
+          │                ▲                      │       │
+          =================│======================│========
+              Receives DSN │                      │ Executes
+              via Webhook  │                      │ Network Call
+                           │                      ▼
+                 ┌─────────┴─────────────────────────────┐
+                 │      External Telecom Providers       │
+                 │  (Safaricom, Twilio, Africa's Talking)│
+                 └─────────────────┬─────────────────────┘
+                                   │ synced when reachable
+                                   ▼
+                 ┌───────────────────────────────────────┐
+                 │      Taifa Care HMIS (external)       │
+                 │      mocked in this repo              │
+                 └───────────────────────────────────────┘
 ```
 
 ### Core mechanisms
