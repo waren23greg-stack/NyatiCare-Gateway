@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
-import { Claim } from "../../../../packages/core-architecture/src/types";
+import { Claim } from "@nyaticare/core-architecture";
 
 const DB_PATH = process.env.OFFLINE_QUEUE_DB_PATH ?? "./data/offline-queue.sqlite";
 

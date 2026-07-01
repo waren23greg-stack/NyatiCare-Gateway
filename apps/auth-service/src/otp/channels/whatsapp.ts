@@ -1,5 +1,5 @@
 import axios from "axios";
-import { OtpChannel, OtpChannelResult } from "../../../../../packages/core-architecture/src/types";
+import { OtpChannel, OtpChannelResult } from "@nyaticare/core-architecture";
 
 /**
  * Secondary OTP channel. Used automatically when the SMS channel

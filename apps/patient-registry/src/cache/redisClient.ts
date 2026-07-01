@@ -1,5 +1,5 @@
 import Redis from "ioredis";
-import { PatientRecord } from "../../../../packages/core-architecture/src/types";
+import { PatientRecord } from "@nyaticare/core-architecture";
 
 const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379");
 const TTL_SECONDS = Number(process.env.REDIS_CACHE_TTL_SECONDS ?? 3600);

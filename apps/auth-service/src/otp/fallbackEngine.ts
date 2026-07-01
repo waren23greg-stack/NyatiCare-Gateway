@@ -1,4 +1,4 @@
-import { OtpChannel, OtpChannelResult } from "../../../../packages/core-architecture/src/types";
+import { OtpChannel, OtpChannelResult } from "@nyaticare/core-architecture";
 import { SmsChannel } from "./channels/sms";
 import { WhatsAppChannel } from "./channels/whatsapp";
 import { VoiceChannel } from "./channels/voice";

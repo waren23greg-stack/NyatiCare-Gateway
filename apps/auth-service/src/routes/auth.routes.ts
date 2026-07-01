@@ -44,10 +44,14 @@ router.post("/otp/verify", (req: Request, res: Response) => {
     return res.status(401).json({ error: result.reason });
   }
 
+  const signOptions: jwt.SignOptions = {
+    expiresIn: (process.env.JWT_EXPIRY ?? "15m") as jwt.SignOptions["expiresIn"],
+  };
+
   const token = jwt.sign(
     { sub: phoneNumber, scope: "patient:verified" },
     process.env.JWT_SECRET ?? "dev-secret-change-me",
-    { expiresIn: process.env.JWT_EXPIRY ?? "15m" }
+    signOptions
   );
 
   return res.status(200).json({ token });

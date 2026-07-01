@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { getCachedPatient, cachePatient } from "../cache/redisClient";
-import { PatientRecord } from "../../../../packages/core-architecture/src/types";
+import { PatientRecord } from "@nyaticare/core-architecture";
 
 const router = Router();
 

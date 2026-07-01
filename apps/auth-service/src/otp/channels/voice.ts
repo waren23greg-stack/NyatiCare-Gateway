@@ -1,5 +1,5 @@
 import axios from "axios";
-import { OtpChannel, OtpChannelResult } from "../../../../../packages/core-architecture/src/types";
+import { OtpChannel, OtpChannelResult } from "@nyaticare/core-architecture";
 
 /**
  * Last-resort OTP channel. Triggers an automated IVR call that reads
