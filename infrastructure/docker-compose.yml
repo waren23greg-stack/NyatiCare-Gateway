@@ -68,6 +68,12 @@ services:
       - ../.env
     ports:
       - "4001:4001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4001/api/v1/health-check', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     depends_on:
       redis:
         condition: service_healthy
@@ -82,6 +88,12 @@ services:
       - "4002:4002"
     volumes:
       - claims_offline_data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4002/api/v1/health-check', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     depends_on:
       kafka:
         condition: service_healthy
@@ -96,6 +108,12 @@ services:
       - ../.env
     ports:
       - "4003:4003"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4003/api/v1/health-check', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     depends_on:
       redis:
         condition: service_healthy
@@ -111,8 +129,10 @@ services:
     ports:
       - "4004:4004"
     depends_on:
-      - auth-service
-      - patient-registry
+      auth-service:
+        condition: service_healthy
+      patient-registry:
+        condition: service_healthy
 volumes:
   postgres_data:
   claims_offline_data:
