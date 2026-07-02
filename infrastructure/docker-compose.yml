@@ -11,6 +11,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ../packages/database/migrations:/docker-entrypoint-initdb.d
+      - ../packages/database/seed/seed.sql:/docker-entrypoint-initdb.d/002_seed.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nyaticare"]
       interval: 5s
