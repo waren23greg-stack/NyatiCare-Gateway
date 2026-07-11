@@ -34,19 +34,19 @@ NyatiCare Gateway is a demonstration of how you'd architect around those constra
 ## Architecture
 
 ```
-┌───────────────────────────────────────────────────────────────┐
+
 │                Hospital / Facility Edge Layer                 │
 │            (local HMIS, EMR, or point-of-care client)         │
 └──────────────────────────────┬──────────────────────────────┬─┘
                                │ HTTPS (Client polls/SSE for OTP)
                                ▼
-┌───────────────────────────────────────────────────────────────┐
+
 │                     NyatiCare API Gateway                     │
 │         rate limiting · JWT auth · circuit breaking           │
 └───────────────┬─────────────────────────────┬─────────────────┘
                 │                             │
                 ▼                             ▼
-   ┌─────────────────────────┐   ┌─────────────────────────────┐
+      
    │   Patient Registry      │   │   Claims Ingestion          │
    │   Redis edge cache,     │   │   Kafka consumer, SQLite    │
    │   cache-aside pattern   │   │   fallback queue on failure │
@@ -55,15 +55,19 @@ NyatiCare Gateway is a demonstration of how you'd architect around those constra
                 └────────────────┬────────────────┘
                                  ▼
 
-          ====== ENHANCED ASYNC AUTHENTICATION LAYER ======
+        
+                 ENHANCED ASYNC AUTHENTICATION LAYER
+          
           │                                               │
-          │      ┌─────────────────────────────────┐      │
+
           │      │         Auth API Gateway        │      │
           │      │ Instantly returns 202 Accepted  │      │
           │      └─┬─────────────────────────────┬─┘      │
           │ Writes │                             │ Pushes │
           │ State  ▼                             ▼ Event  │
-          │ ┌──────────────┐             ┌──────────────┐ │
+          │ 
+          
+          │
           │ │ Redis Store  │             │ Kafka Broker │ │
           │ │ (Tracks       │            │ (auth_topic) │ │
           │ │  cascade step)│            └──────┬───────┘ │
@@ -84,16 +88,16 @@ NyatiCare Gateway is a demonstration of how you'd architect around those constra
           │      │  Webhook Ingestion Endpoint     │      │
           │      │  (Listens for Telecom Failures) │      │
           │      └──────────────────────┬──────────┘      │
-          ==============================│==================
+          ==============================│=================
                                         │
                                         ▼
-                 ┌───────────────────────────────────────┐
+                 
                  │      External Telecom Providers       │
                  │  (Safaricom, Twilio, Africa's Talking)│
                  └──────────────────┬────────────────────┘
                                     │ synced when reachable
                                     ▼
-                 ┌───────────────────────────────────────┐
+                
                  │      Taifa Care HMIS (external)       │
                  │      mocked in this repo              │
                  └───────────────────────────────────────┘
